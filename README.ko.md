@@ -171,6 +171,7 @@ curl "https://<당신의-Worker-도메인>/setup" -H "X-Setup-Key: <SETUP_KEY>"
 | `/ai 질문` | AI 채팅 (또는 텍스트 직접 입력) | 전체 |
 | `/mem 턴수 글자수` | 메모리 깊이 설정 | 전체 |
 | `/new` | 메모리 초기화, 새 세션 | 전체 |
+| `/lang` | 언어 전환 (8개 언어) | 전체 |
 | `/setapi` | 커스텀 API 추가 | 관리자 |
 | `/delapi` | 임시 API 삭제 | 관리자 |
 | `/setkey` | API 키 변경 | 관리자 |

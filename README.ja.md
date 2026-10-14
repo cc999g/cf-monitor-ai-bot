@@ -171,6 +171,7 @@ curl "https://<あなたのWorkerドメイン>/setup" -H "X-Setup-Key: <SETUP_KE
 | `/ai 質問` | AI チャット（または直接テキスト入力） | 全員 |
 | `/mem ターン数 文字数` | 記憶深度設定 | 全員 |
 | `/new` | 記憶クリア、新規セッション | 全員 |
+| `/lang` | 言語切替（8言語） | 全員 |
 | `/setapi` | カスタム API 追加 | 管理者 |
 | `/delapi` | 一時 API 削除 | 管理者 |
 | `/setkey` | API キー変更 | 管理者 |

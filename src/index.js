@@ -16,6 +16,8 @@
  * Webhook 安全：setWebhook 带 secret_token，所有 POST 校验 X-Telegram-Bot-Api-Secret-Token
  */
 
+import { t, LANGS, DEFAULT_LANG, isBtn, LANG_NAMES } from './i18n.js';
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -113,54 +115,55 @@ export default {
       const chatId = String(cb.message.chat.id);
       const data = String(cb.data || '');
       console.log('[cb] chatId=' + chatId + ' data=' + data);
+      const lang = await getLang(env, chatId);
       const role = await getRole(env, chatId);
       if (!role) {
-        await sendTg(env, chatId, '🔒 请先输入邀请码激活后使用。');
+        await sendTg(env, chatId, t(lang, 'auth_lock'));
         await answerCb(env, cb.id);
         return new Response('ok');
       }
       if (data === 'status') {
-        await cfStatus(env, chatId);
+        await cfStatus(env, chatId, lang);
       } else if (data === 'ai') {
-        await sendTg(env, chatId, '🤖 直接输入你的问题即可对话（不用加 /ai）\n\n例如：帮我写一个 Python 排序函数');
+        await sendTg(env, chatId, t(lang, 'ai_direct'));
       } else if (data === 'help') {
-        await sendHelp(env, chatId);
+        await sendHelp(env, chatId, lang);
       } else if (data === 'models') {
-        await showModels(env, chatId);
+        await showModels(env, chatId, lang);
       } else if (data === 'setapi') {
-        await sendTg(env, chatId,
-          '⚙️ <b>添加自定义 API</b>\n\n发送：\n<code>/setapi 地址 | 密钥 | 模型1,模型2 | 名称</code>\n\n' +
-          '例如：\n<code>/setapi https://api.deepseek.com | sk-xxx | deepseek-chat | DeepSeek</code>\n\n' +
-          '· 名称可省略（默认取域名）\n' +
-          '· 添加的是<u>新增</u> API，不会覆盖已有配置\n' +
-          '· 添加后在 🧠 模型选择 里点选即可使用\n' +
-          '· 内置 lfree API 永久保留，不会被覆盖'
-        );
+        await sendTg(env, chatId, t(lang, 'api_add_help') + '\n\n' + t(lang, 'api_add_ex') + '\n\n· ' + t(lang, 'm_add_hint'));
       } else if (data === 'delapi') {
-        await showDelApi(env, chatId);
+        await showDelApi(env, chatId, lang);
       } else if (data === 'setkey') {
-        await sendTg(env, chatId,
-          '🔑 <b>修改 API Key</b>\n\n发送：\n<code>/setkey 名称 新密钥</code>\n\n' +
-          '例如：\n<code>/setkey lfree sk-新的key</code>\n\n' +
-          '· 名称可以是 lfree 或任意已添加的 API\n' +
-          '· 修改后立即生效，无需重新部署'
-        );
+        await sendTg(env, chatId, t(lang, 'api_key_help'));
       } else if (data === 'mem') {
-        await showMemSettings(env, chatId);
+        await showMemSettings(env, chatId, lang);
+      } else if (data === 'lang') {
+        await showLangPanel(env, chatId, lang);
+      } else if (data.startsWith('lang:')) {
+        const newLang = data.slice(5);
+        if (LANGS.includes(newLang)) {
+          await saveLang(env, chatId, newLang);
+          await answerCb(env, cb.id, t(newLang, 'lang_done', { name: LANG_NAMES[newLang] }));
+          await sendHelp(env, chatId, newLang);
+        } else {
+          await answerCb(env, cb.id);
+        }
+        return new Response('ok');
       } else if (data === 'mem:clear') {
-        const confirm = await clearHist(env, chatId, cb.message.message_id);
+        const confirm = await clearHist(env, chatId, lang, cb.message.message_id);
         await answerCb(env, cb.id, confirm || undefined);
         return new Response('ok');
       } else if (data.startsWith('mem:')) {
-        const confirm = await handleMemPick(env, chatId, data, cb.message.message_id);
+        const confirm = await handleMemPick(env, chatId, lang, data, cb.message.message_id);
         await answerCb(env, cb.id, confirm || undefined);
         return new Response('ok');
       } else if (data.startsWith('mc:')) {
-        const confirm = await handleModelPick(env, chatId, data, cb.message.message_id);
+        const confirm = await handleModelPick(env, chatId, lang, data, cb.message.message_id);
         await answerCb(env, cb.id, confirm || undefined);
         return new Response('ok');
       } else if (data.startsWith('da:')) {
-        await handleDelApiCb(env, chatId, data, cb.id);
+        await handleDelApiCb(env, chatId, lang, data, cb.id);
         await answerCb(env, cb.id);
         return new Response('ok');
       }
@@ -176,6 +179,13 @@ export default {
 
     const text = msg.text.trim();
 
+    // ---------- 语言：读取偏好；无记录时按 Telegram language_code 自动检测 ----------
+    let lang = await getLang(env, chatId);
+    if (lang === DEFAULT_LANG && msg.from && msg.from.language_code && LANGS.includes(msg.from.language_code)) {
+      lang = msg.from.language_code;
+      await saveLang(env, chatId, lang);
+    }
+
     // ---------- 访问控制：两级邀请码机制 ----------
     // 管理员邀请码 → 管理员权限；成员邀请码 → 普通成员权限
     // 码来源：KV cfg:codes（bot 内 /setcode 修改，唯一权威）→ 兜底环境变量 TG_ACCESS_CODE / TG_MEMBER_CODE
@@ -186,85 +196,70 @@ export default {
       if (codes.admin && text === codes.admin) {
         try {
           await env.ACCESS.put('chat:' + chatId, 'admin');
-          await sendHelp(env, chatId, '✅ 管理员邀请码验证成功，你已获得<u>管理员权限</u>！');
+          await sendHelp(env, chatId, lang, t(lang, 'auth_admin'));
         } catch (e) {
           console.log('[access-put-err]', String(e.message || e));
-          await sendTg(env, chatId, '❌ 激活失败，请稍后重试或联系管理员。');
+          await sendTg(env, chatId, t(lang, 'auth_fail'));
         }
       } else if (codes.member && text === codes.member) {
         try {
           await env.ACCESS.put('chat:' + chatId, 'member');
-          await sendHelp(env, chatId, '✅ 成员邀请码验证成功，你已获得<u>普通成员权限</u>！');
+          await sendHelp(env, chatId, lang, t(lang, 'auth_member'));
         } catch (e) {
           console.log('[access-put-err]', String(e.message || e));
-          await sendTg(env, chatId, '❌ 激活失败，请稍后重试或联系管理员。');
+          await sendTg(env, chatId, t(lang, 'auth_fail'));
         }
       } else {
-        await sendTg(env, chatId,
-          '🔒 本机器人需要邀请码才能使用。\n\n' +
-          '请输入管理员或成员邀请码，验证通过后即可使用。\n' +
-          '（普通成员可对话/查用量/选模型；管理员额外可管理 API）'
-        );
+        await sendTg(env, chatId, t(lang, 'auth_hint'));
       }
       return new Response('ok');
     }
 
     const isAdmin = role === 'admin';
 
-    if (text === '/start' || text === '/help' || text === '❓ 帮助') {
-      await sendHelp(env, chatId);
-    } else if (text === '/status' || text === '📊 用量查询' || text === '📊 查看用量') {
-      await cfStatus(env, chatId);
-    } else if (text === '🤖 AI 对话') {
-      await sendTg(env, chatId, '🤖 直接输入你的问题即可对话（不用加 /ai）\n\n例如：帮我写一个 Python 排序函数');
-    } else if (text === '🧠 模型选择') {
-      await showModels(env, chatId);
-    } else if (text === '⚙️ 设置API' || text === '⚙️ 添加API') {
-      await sendTg(env, chatId,
-        '⚙️ <b>添加自定义 API</b>\n\n发送：\n<code>/setapi 地址 | 密钥 | 模型1,模型2 | 名称</code>\n\n' +
-        '例如：\n<code>/setapi https://api.deepseek.com | sk-xxx | deepseek-chat | DeepSeek</code>\n\n' +
-        '· 名称可省略（默认取域名）\n' +
-        '· 添加的是<u>新增</u> API，不会覆盖已有配置\n' +
-        '· 添加后在 🧠 模型选择 里点选即可使用'
-      );
-    } else if (text === '🗑️ 删除API') {
-      await showDelApi(env, chatId);
-    } else if (text === '🔑 修改Key') {
-      await sendTg(env, chatId,
-        '🔑 <b>修改 API Key</b>\n\n发送：\n<code>/setkey 名称 新密钥</code>\n\n' +
-        '例如：\n<code>/setkey lfree sk-新的key</code>\n\n' +
-        '· 名称可以是 lfree 或任意已添加的 API\n' +
-        '· 修改后立即生效，无需重新部署'
-      );
-    } else if (text === '🧠 记忆设置') {
-      await showMemSettings(env, chatId);
-    } else if (text === '🆕 新会话' || text === '/new' || text === '/clear' || text === '/reset') {
-      await clearHist(env, chatId);
+    if (text === '/start' || text === '/help' || isBtn(text, 'btn_help')) {
+      await sendHelp(env, chatId, lang);
+    } else if (text === '/status' || isBtn(text, 'btn_status') || text === '📊 查看用量') {
+      await cfStatus(env, chatId, lang);
+    } else if (isBtn(text, 'btn_ai') || text === '/ai') {
+      await sendTg(env, chatId, t(lang, 'ai_direct'));
+    } else if (isBtn(text, 'btn_models')) {
+      await showModels(env, chatId, lang);
+    } else if (isBtn(text, 'btn_addapi') || text === '⚙️ 设置API') {
+      await sendTg(env, chatId, t(lang, 'api_add_help') + '\n\n' + t(lang, 'api_add_ex') + '\n\n· ' + t(lang, 'm_add_hint'));
+    } else if (isBtn(text, 'btn_delapi')) {
+      await showDelApi(env, chatId, lang);
+    } else if (isBtn(text, 'btn_key')) {
+      await sendTg(env, chatId, t(lang, 'api_key_help'));
+    } else if (isBtn(text, 'btn_mem')) {
+      await showMemSettings(env, chatId, lang);
+    } else if (isBtn(text, 'btn_new') || text === '/new' || text === '/clear' || text === '/reset') {
+      await clearHist(env, chatId, lang);
+    } else if (text === '/lang') {
+      await showLangPanel(env, chatId, lang);
     } else if (text.startsWith('/mem')) {
-      await handleMem(env, chatId, text);
+      await handleMem(env, chatId, lang, text);
     } else if (text.startsWith('/setkey')) {
-      if (!isAdmin) { await sendTg(env, chatId, '🔒 只有管理员可以修改 Key。'); return new Response('ok'); }
-      await handleSetKey(env, chatId, text);
+      if (!isAdmin) { await sendTg(env, chatId, t(lang, 'perm_admin_key')); return new Response('ok'); }
+      await handleSetKey(env, chatId, lang, text);
     } else if (text.startsWith('/setcode')) {
-      if (!isAdmin) { await sendTg(env, chatId, '🔒 只有管理员可以设置邀请码。'); return new Response('ok'); }
-      await handleSetCode(env, chatId, text);
+      if (!isAdmin) { await sendTg(env, chatId, t(lang, 'perm_admin_code')); return new Response('ok'); }
+      await handleSetCode(env, chatId, lang, text);
     } else if (text.startsWith('/setapi')) {
-      if (!isAdmin) { await sendTg(env, chatId, '🔒 只有管理员可以配置 API。'); return new Response('ok'); }
-      await handleSetApi(env, chatId, text);
+      if (!isAdmin) { await sendTg(env, chatId, t(lang, 'perm_admin_api')); return new Response('ok'); }
+      await handleSetApi(env, chatId, lang, text);
     } else if (text.startsWith('/delapi')) {
-      if (!isAdmin) { await sendTg(env, chatId, '🔒 只有管理员可以删除 API。'); return new Response('ok'); }
-      await handleDelApi(env, chatId, text);
-    } else if (text === '/ai') {
-      await sendTg(env, chatId, '🤖 直接输入你的问题即可对话（不用加 /ai）\n\n例如：帮我写一个 Python 排序函数');
+      if (!isAdmin) { await sendTg(env, chatId, t(lang, 'perm_admin_del')); return new Response('ok'); }
+      await handleDelApi(env, chatId, lang, text);
     } else if (text.startsWith('/ai ')) {
-      await aiChat(env, chatId, text.slice(4));
+      await aiChat(env, chatId, lang, text.slice(4));
     } else if (text.startsWith('/ai\n')) {
-      await aiChat(env, chatId, text.slice(4));
+      await aiChat(env, chatId, lang, text.slice(4));
     } else if (text.startsWith('/')) {
-      await sendTg(env, chatId, '❓ 未识别的命令。试试：/status、/setapi、/delapi 或直接输入文字对话');
+      await sendTg(env, chatId, t(lang, 'unk'));
     } else {
       // 默认模式：任何普通文字都走 AI 对话
-      await aiChat(env, chatId, text);
+      await aiChat(env, chatId, lang, text);
     }
 
     return new Response('ok');
@@ -276,14 +271,26 @@ export default {
 // 模型体系：Cloudflare 免费（永久）+ API 注册表（内置永久 + 临时可删）
 // ============================================================
 
-// Cloudflare 免费模型（短码 id + 完整绑定名 + 优缺点说明）
+// Cloudflare 免费模型（短码 id + 完整绑定名；显示名/优缺点在多语言字典里）
 const CF_MODELS = [
-  { id: 'qwen3', full: '@cf/qwen/qwen3-30b-a3b-fp8', name: '通义 Qwen3-30B', pros: '中文理解最好，回答自然，综合均衡', cons: '创意发挥略保守' },
-  { id: 'gpt120b', full: '@cf/openai/gpt-oss-120b', name: 'GPT-OSS-120B', pros: '英文/代码能力强，逻辑严谨', cons: '中文略生硬，较耗额度' },
-  { id: 'llama70b', full: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', name: 'Llama 3.3 70B', pros: '综合均衡，响应快', cons: '中文表现一般' },
-  { id: 'mistral24b', full: '@cf/mistralai/mistral-small-3.1-24b-instruct', name: 'Mistral Small 24B', pros: '轻快省额度，多语言', cons: '复杂深度任务一般' },
-  { id: 'llama8b', full: '@cf/meta/llama-3.1-8b-instruct-fp8', name: 'Llama 3.1 8B', pros: '最省额度，秒回', cons: '能力最弱，适合闲聊' },
+  { id: 'qwen3', full: '@cf/qwen/qwen3-30b-a3b-fp8' },
+  { id: 'gpt120b', full: '@cf/openai/gpt-oss-120b' },
+  { id: 'llama70b', full: '@cf/meta/llama-3.3-70b-instruct-fp8-fast' },
+  { id: 'mistral24b', full: '@cf/mistralai/mistral-small-3.1-24b-instruct' },
+  { id: 'llama8b', full: '@cf/meta/llama-3.1-8b-instruct-fp8' },
 ];
+// 每个 CF 模型的 i18n key：[名称, 优点, 缺点]
+const CF_KEYS = {
+  qwen3: ['m_qwen_n', 'm_qwen_p', 'm_qwen_c'],
+  gpt120b: ['m_gpt_n', 'm_gpt_p', 'm_gpt_c'],
+  llama70b: ['m_l70_n', 'm_l70_p', 'm_l70_c'],
+  mistral24b: ['m_mis_n', 'm_mis_p', 'm_mis_c'],
+  llama8b: ['m_l8_n', 'm_l8_p', 'm_l8_c'],
+};
+function cfName(lang, id) {
+  const k = CF_KEYS[id];
+  return k ? t(lang, k[0]) : id;
+}
 // Cloudflare 回退链（选中模型失败时依次尝试）
 const CF_FALLBACK = [
   '@cf/qwen/qwen3-30b-a3b-fp8',
@@ -385,27 +392,27 @@ async function healPref(env, chatId, pref, apis) {
 }
 
 // ---------- 当前主模型描述 ----------
-function describeCurrent(pref, apis) {
+function describeCurrent(pref, apis, lang) {
   if (pref.type === 'api') {
     const api = apis.find(a => a.id === pref.apiId);
-    const src = api ? api.name : '未知API';
-    return '<b>' + escapeHtml(pref.model || '自定义模型') + '</b>（' + escapeHtml(src) + '）';
+    const src = api ? api.name : 'unknown';
+    return '<b>' + escapeHtml(pref.model || 'custom') + '</b>（' + escapeHtml(src) + '）';
   }
   const m = CF_MODELS.find(x => x.id === pref.cfModel) || CF_MODELS[0];
-  return '<b>' + m.name + '</b>（Cloudflare 免费）';
+  return '<b>' + cfName(lang, m.id) + '</b>（Cloudflare）';
 }
 
 // ---------- 模型选择面板：消息与按钮 ----------
-function buildModelsMsg(pref, apis) {
-  let msg = '🧠 <b>模型选择</b>\n\n';
-  msg += '当前：' + describeCurrent(pref, apis) + '\n\n';
-  msg += '图例：<code>☁️ CF</code> = Cloudflare 免费　<code>🔑 lfree</code> = 内置永久　<code>📦 名称</code> = 临时 API\n\n';
+function buildModelsMsg(pref, apis, lang) {
+  let msg = t(lang, 'm_title') + '\n\n';
+  msg += t(lang, 'm_current', { model: describeCurrent(pref, apis, lang) }) + '\n\n';
+  msg += t(lang, 'm_legend') + '\n\n';
 
   // CF 免费模型（永久）
-  msg += '📋 <b>☁️ Cloudflare 免费模型（永久）</b>：\n';
+  msg += t(lang, 'm_cf_sec') + '：\n';
   for (const m of CF_MODELS) {
     const mark = pref.type === 'cf' && pref.cfModel === m.id ? '✅ ' : '⚪ ';
-    msg += mark + '<b>' + m.name + '</b>\n　👍 ' + m.pros + '\n　👎 ' + m.cons + '\n';
+    msg += mark + '<b>' + cfName(lang, m.id) + '</b>\n　👍 ' + t(lang, CF_KEYS[m.id][1]) + '\n　👎 ' + t(lang, CF_KEYS[m.id][2]) + '\n';
   }
 
   // API 模型
@@ -413,7 +420,7 @@ function buildModelsMsg(pref, apis) {
     const customModels = (api.model || '').split(',').map(s => s.trim()).filter(Boolean);
     if (customModels.length === 0) continue;
     const tag = api.builtin ? '🔑' : '📦';
-    msg += '\n📋 <b>' + tag + ' ' + escapeHtml(api.name) + (api.builtin ? '（永久保留）' : '（临时）') + '</b>：\n';
+    msg += '\n' + t(lang, 'm_api_sec', { tag, name: escapeHtml(api.name) + (api.builtin ? t(lang, 'm_builtin') : t(lang, 'm_tmp')) }) + '：\n';
     for (const m of customModels) {
       const mark = pref.type === 'api' && pref.apiId === api.id && pref.model === m ? '✅ ' : '⚪ ';
       msg += mark + '<b>' + escapeHtml(m) + '</b>\n';
@@ -421,17 +428,17 @@ function buildModelsMsg(pref, apis) {
   }
 
   if (apis.length === 0) {
-    msg += '\n（暂无自定义 API，可用 <code>/setapi 地址 | 密钥 | 模型</code> 添加）';
+    msg += '\n' + t(lang, 'm_none');
   }
   return msg;
 }
 
-function buildModelsKb(pref, apis) {
+function buildModelsKb(pref, apis, lang) {
   const rows = [];
   // CF 免费模型：☁️ 前缀
   for (let i = 0; i < CF_MODELS.length; i += 2) {
     rows.push(CF_MODELS.slice(i, i + 2).map(m => ({
-      text: (pref.type === 'cf' && pref.cfModel === m.id ? '✅ ' : '') + '☁️ ' + m.name,
+      text: (pref.type === 'cf' && pref.cfModel === m.id ? '✅ ' : '') + '☁️ ' + cfName(lang, m.id),
       callback_data: 'mc:cf:' + m.id,
     })));
   }
@@ -447,23 +454,23 @@ function buildModelsKb(pref, apis) {
       })));
     }
   }
-  const bottom = [{ text: '⚙️ 添加 API', callback_data: 'setapi' }];
+  const bottom = [{ text: t(lang, 'btn_addapi'), callback_data: 'setapi' }];
   const hasTmp = apis.some(a => !a.builtin);
-  if (hasTmp) bottom.push({ text: '🗑️ 删除临时 API', callback_data: 'delapi' });
+  if (hasTmp) bottom.push({ text: t(lang, 'btn_delapi'), callback_data: 'delapi' });
   rows.push(bottom);
   return rows;
 }
 
-async function showModels(env, chatId) {
+async function showModels(env, chatId, lang) {
   const pref = await getPref(env, chatId);
   const apis = await getApis(env);
   await healPref(env, chatId, pref, apis); // 自愈：指向已删除 API 时切回 CF
-  await sendTg(env, chatId, buildModelsMsg(pref, apis), { inline_keyboard: buildModelsKb(pref, apis) }, true);
+  await sendTg(env, chatId, buildModelsMsg(pref, apis, lang), { inline_keyboard: buildModelsKb(pref, apis, lang) }, true);
 }
 
 // ---------- 处理模型选择回调 ----------
 // 返回确认文案（供 answerCallbackQuery toast 显示）
-async function handleModelPick(env, chatId, data, msgId) {
+async function handleModelPick(env, chatId, lang, data, msgId) {
   try {
     const pref = await getPref(env, chatId);
     const apis = await getApis(env);
@@ -478,7 +485,7 @@ async function handleModelPick(env, chatId, data, msgId) {
       pref.cfModel = id;
       pref.apiId = '';
       pref.model = '';
-      confirm = '✅ 已切换：' + m.name;
+      confirm = t(lang, 'sw_ok', { name: cfName(lang, id) });
     } else if (parts[1] === 'api') {
       const apiId = parts.slice(2, -1).join(':');
       const idx = parseInt(parts[parts.length - 1], 10);
@@ -490,14 +497,14 @@ async function handleModelPick(env, chatId, data, msgId) {
       pref.type = 'api';
       pref.apiId = apiId;
       pref.model = m;
-      confirm = '✅ 已切换：' + m;
+      confirm = t(lang, 'sw_ok', { name: m });
     } else {
       return '';
     }
     await savePref(env, chatId, pref);
     // 刷新面板：优先编辑原消息（带最新 ✅ 标记），失败则补发新面板
-    const newMsg = buildModelsMsg(pref, apis);
-    const newKb = { inline_keyboard: buildModelsKb(pref, apis) };
+    const newMsg = buildModelsMsg(pref, apis, lang);
+    const newKb = { inline_keyboard: buildModelsKb(pref, apis, lang) };
     let edited = false;
     if (msgId) {
       edited = await editTg(env, chatId, msgId, newMsg, newKb);
@@ -508,47 +515,47 @@ async function handleModelPick(env, chatId, data, msgId) {
     return confirm;
   } catch (e) {
     console.log('[model-pick-err]', String(e.message || e));
-    return '❌ 切换失败';
+    return '❌';
   }
 }
 
 // ---------- 删除临时 API 面板 ----------
-async function showDelApi(env, chatId) {
+async function showDelApi(env, chatId, lang) {
   const apis = await getApis(env);
   const tmp = apis.filter(a => !a.builtin);
-  let msg = '🗑️ <b>删除临时 API</b>\n\n';
+  let msg = t(lang, 'api_del_help') + '\n\n';
   if (tmp.length === 0) {
-    msg += '当前没有临时 API 可删除。\n内置 <b>lfree</b> 永久保留，不会出现在这里。';
+    msg += t(lang, 'api_del_none');
     await sendTg(env, chatId, msg);
     return;
   }
-  msg += '内置 API 永久保留，以下为临时 API，点按钮删除，或发送 <code>/delapi 名称</code>：\n\n';
+  msg += t(lang, 'api_del_here') + '\n\n';
   const rows = [];
   for (const a of tmp) {
     const models = (a.model || '').split(',').map(s => s.trim()).filter(Boolean).slice(0, 3).join(', ');
     msg += '· <b>' + escapeHtml(a.name) + '</b>：' + escapeHtml(models) + '\n';
-    rows.push([{ text: '🗑️ 删除 ' + a.name, callback_data: 'da:' + a.id }]);
+    rows.push([{ text: '🗑️ ' + a.name, callback_data: 'da:' + a.id }]);
   }
   await sendTg(env, chatId, msg, { inline_keyboard: rows }, true);
 }
 
 // ---------- 处理删除回调 ----------
-async function handleDelApiCb(env, chatId, data, cbId) {
+async function handleDelApiCb(env, chatId, lang, data, cbId) {
   try {
     const isAdmin = (await getRole(env, chatId)) === 'admin';
     if (!isAdmin) {
-      await sendTg(env, chatId, '🔒 只有管理员可以删除 API。');
+      await sendTg(env, chatId, t(lang, 'perm_admin_del'));
       return;
     }
     const apiId = data.slice(3);
     const apis = await getApis(env);
     const api = apis.find(a => a.id === apiId);
     if (!api) {
-      await sendTg(env, chatId, '❌ 未找到该 API。');
+      await sendTg(env, chatId, t(lang, 'api_del_nf', { name: apiId }));
       return;
     }
     if (api.builtin) {
-      await sendTg(env, chatId, '🔒 内置 API（' + escapeHtml(api.name) + '）永久保留，不可删除。');
+      await sendTg(env, chatId, t(lang, 'api_del_bi', { name: escapeHtml(api.name) }));
       return;
     }
     const rest = apis.filter(a => a.id !== apiId);
@@ -561,29 +568,24 @@ async function handleDelApiCb(env, chatId, data, cbId) {
       pref.model = '';
       await savePref(env, chatId, pref);
     }
-    await sendTg(env, chatId, '🗑️ 已删除临时 API：<b>' + escapeHtml(api.name) + '</b>');
+    await sendTg(env, chatId, t(lang, 'api_del_done', { name: '<b>' + escapeHtml(api.name) + '</b>' }));
   } catch (e) {
     console.log('[delapi-cb-err]', String(e.message || e));
-    await sendTg(env, chatId, '❌ 删除失败：' + escapeHtml(String(e.message || e)));
+    await sendTg(env, chatId, t(lang, 'err_generic', { err: escapeHtml(String(e.message || e)) }));
   }
 }
 
 // ---------- /setapi 添加 API ----------
-async function handleSetApi(env, chatId, text) {
+async function handleSetApi(env, chatId, lang, text) {
   try {
     const arg = text.replace(/^\/setapi\s*/, '').trim();
     if (!arg) {
-      await sendTg(env, chatId,
-        '⚙️ <b>添加自定义 API</b>\n\n发送：\n<code>/setapi 地址 | 密钥 | 模型1,模型2 | 名称</code>\n\n' +
-        '· 名称可省略（默认取域名）\n' +
-        '· 添加的是<u>新增</u> API，不会覆盖已有配置\n' +
-        '· <code>/delapi 名称</code> 可删除临时 API'
-      );
+      await sendTg(env, chatId, t(lang, 'api_add_help') + '\n\n' + t(lang, 'api_add_ex'));
       return;
     }
     const parts = arg.split('|').map(s => s.trim());
     if (parts.length < 3) {
-      await sendTg(env, chatId, '❌ 格式不对，请用 <code>|</code> 分隔：\n<code>/setapi 地址 | 密钥 | 模型1,模型2 | 名称</code>');
+      await sendTg(env, chatId, t(lang, 'api_add_err'));
       return;
     }
     const url = parts[0];
@@ -591,11 +593,11 @@ async function handleSetApi(env, chatId, text) {
     const model = parts[2];
     const name = parts[3] || (url.replace(/^https?:\/\//, '').split('/')[0] || 'api');
     if (!url || !key || !model) {
-      await sendTg(env, chatId, '❌ 地址/密钥/模型不能为空');
+      await sendTg(env, chatId, t(lang, 'api_add_empty'));
       return;
     }
     if (!/^https?:\/\//i.test(url)) {
-      await sendTg(env, chatId, '❌ 地址必须以 http:// 或 https:// 开头：\n<code>' + escapeHtml(url) + '</code>');
+      await sendTg(env, chatId, t(lang, 'api_add_url', { url: '<code>' + escapeHtml(url) + '</code>' }));
       return;
     }
     const apis = await getApis(env);
@@ -625,71 +627,65 @@ async function handleSetApi(env, chatId, text) {
       await savePref(env, chatId, pref);
     }
     await sendTg(env, chatId,
-      '✅ 已添加 API：<b>' + escapeHtml(finalName) + '</b>' +
-      (firstModel ? '，并已自动设为主模型：<b>' + escapeHtml(firstModel) + '</b>' : '') + '\n\n' +
-      '· 模型：' + escapeHtml(model) + '\n' +
-      '· 已有配置（lfree 等）完全不受影响\n\n' +
-      '也可随时点 <b>🧠 模型选择</b> 按钮切换'
+      t(lang, 'api_add_done', { name: '<b>' + escapeHtml(finalName) + '</b>' }) +
+      (firstModel ? t(lang, 'api_add_main', { model: '<b>' + escapeHtml(firstModel) + '</b>' }) : '') +
+      t(lang, 'api_add_keep', { model: escapeHtml(model) })
     );
   } catch (e) {
     console.log('[setapi-err]', String(e.message || e));
-    await sendTg(env, chatId, '❌ 保存失败：' + escapeHtml(String(e.message || e)));
+    await sendTg(env, chatId, t(lang, 'err_save', { err: escapeHtml(String(e.message || e)) }));
   }
 }
 
 // ---------- /setkey 修改 API Key ----------
-async function handleSetKey(env, chatId, text) {
+async function handleSetKey(env, chatId, lang, text) {
   try {
     const arg = text.replace(/^\/setkey\s*/, '').trim();
     const parts = arg.split(/\s+/);
     if (!arg || parts.length < 2) {
-      await sendTg(env, chatId,
-        '🔑 <b>修改 API Key</b>\n\n发送：\n<code>/setkey 名称 新密钥</code>\n\n' +
-        '例如：<code>/setkey lfree sk-新的key</code>'
-      );
+      await sendTg(env, chatId, t(lang, 'api_key_help'));
       return;
     }
     const name = parts[0];
     const newKey = parts.slice(1).join('');
     if (newKey.length < 10) {
-      await sendTg(env, chatId, '❌ 密钥太短，请检查是否完整复制。');
+      await sendTg(env, chatId, t(lang, 'api_key_short'));
       return;
     }
     const apis = await getApis(env);
     const target = apis.find(a => a.name === name) || apis.find(a => a.id === name);
     if (!target) {
-      await sendTg(env, chatId, '❌ 未找到名为 <b>' + escapeHtml(name) + '</b> 的 API。可发送 /delapi 查看列表');
+      await sendTg(env, chatId, t(lang, 'api_key_nf', { name: '<b>' + escapeHtml(name) + '</b>' }));
       return;
     }
     target.key = newKey;
     await saveApis(env, apis);
-    await sendTg(env, chatId,
-      '✅ 已更新 <b>' + escapeHtml(target.name) + '</b> 的 Key\n\n' +
-      '· 新 Key 尾四位：<code>' + escapeHtml(newKey.slice(-4)) + '</code>\n' +
-      '· 修改已生效，直接对话即可使用'
-    );
+    await sendTg(env, chatId, t(lang, 'api_key_done', {
+      name: '<b>' + escapeHtml(target.name) + '</b>',
+      tail: '<code>' + escapeHtml(newKey.slice(-4)) + '</code>',
+    }));
   } catch (e) {
     console.log('[setkey-err]', String(e.message || e));
-    await sendTg(env, chatId, '❌ 修改失败：' + escapeHtml(String(e.message || e)));
+    await sendTg(env, chatId, t(lang, 'err_generic', { err: escapeHtml(String(e.message || e)) }));
   }
 }
 
 // ---------- /delapi 命令 ----------
-async function handleDelApi(env, chatId, text) {
+async function handleDelApi(env, chatId, lang, text) {
   try {
     const arg = text.replace(/^\/delapi\s*/, '').trim();
     if (!arg) {
-      await showDelApi(env, chatId);
+      await showDelApi(env, chatId, lang);
       return;
     }
     const apis = await getApis(env);
     const target = apis.find(a => a.name === arg) || apis.find(a => a.id === arg);
     if (!target) {
-      await sendTg(env, chatId, '❌ 未找到名为 <b>' + escapeHtml(arg) + '</b> 的 API。可用 /delapi 查看列表');
+      await sendTg(env, chatId, t(lang, 'api_del_nf', { name: '<b>' + escapeHtml(arg) + '</b>' }));
       return;
     }
     if (target.builtin) {
-      await sendTg(env, chatId, '🔒 内置 API（' + escapeHtml(target.name) + '）永久保留，不可删除。');
+      await sendTg(env, chatId, t(lang, 'api_del_bi', { name: escapeHtml(target.name) }));
       return;
     }
     const rest = apis.filter(a => a.id !== target.id);
@@ -701,10 +697,10 @@ async function handleDelApi(env, chatId, text) {
       pref.model = '';
       await savePref(env, chatId, pref);
     }
-    await sendTg(env, chatId, '🗑️ 已删除临时 API：<b>' + escapeHtml(target.name) + '</b>');
+    await sendTg(env, chatId, t(lang, 'api_del_done', { name: '<b>' + escapeHtml(target.name) + '</b>' }));
   } catch (e) {
     console.log('[delapi-err]', String(e.message || e));
-    await sendTg(env, chatId, '❌ 删除失败：' + escapeHtml(String(e.message || e)));
+    await sendTg(env, chatId, t(lang, 'err_generic', { err: escapeHtml(String(e.message || e)) }));
   }
 }
 
@@ -749,80 +745,106 @@ async function getCodes(env) {
 }
 
 // ---------- /setcode 设置邀请码（仅管理员） ----------
-async function handleSetCode(env, chatId, text) {
+async function handleSetCode(env, chatId, lang, text) {
   try {
     const arg = text.replace(/^\/setcode\s*/, '').trim();
     const parts = arg.split(/\s+/);
     if (!arg || parts.length < 2) {
-      await sendTg(env, chatId,
-        '🔐 <b>设置邀请码</b>\n\n发送：\n<code>/setcode 新管理员码 新成员码</code>\n\n' +
-        '例如：\n<code>/setcode admin2026 member2026</code>\n\n' +
-        '· 两个码都要填，长度至少 6 位\n' +
-        '· 设置后立即生效，旧码作废\n' +
-        '· 已激活的用户不受影响'
-      );
+      await sendTg(env, chatId, t(lang, 'code_help'));
       return;
     }
     const admin = parts[0];
     const member = parts[1];
     if (admin.length < 6 || member.length < 6) {
-      await sendTg(env, chatId, '❌ 邀请码长度至少 6 位');
+      await sendTg(env, chatId, t(lang, 'code_err_len'));
       return;
     }
     if (admin === member) {
-      await sendTg(env, chatId, '❌ 管理员码和成员码不能相同');
+      await sendTg(env, chatId, t(lang, 'code_err_same'));
       return;
     }
     await env.ACCESS.put('cfg:codes', JSON.stringify({ admin, member }));
-    await sendTg(env, chatId,
-      '✅ 邀请码已更新，立即生效：\n\n' +
-      '· 管理员码：<code>' + escapeHtml(admin) + '</code>\n' +
-      '· 成员码：<code>' + escapeHtml(member) + '</code>'
-    );
+    await sendTg(env, chatId, t(lang, 'code_done', {
+      admin: '<code>' + escapeHtml(admin) + '</code>',
+      member: '<code>' + escapeHtml(member) + '</code>',
+    }));
   } catch (e) {
     console.log('[setcode-err]', String(e.message || e));
-    await sendTg(env, chatId, '❌ 设置失败：' + escapeHtml(String(e.message || e)));
+    await sendTg(env, chatId, t(lang, 'err_generic', { err: escapeHtml(String(e.message || e)) }));
   }
 }
 
+// ---------- 语言偏好：KV lang:<chatId> ----------
+async function getLang(env, chatId) {
+  try {
+    const v = await env.ACCESS.get('lang:' + chatId);
+    if (v && LANGS.includes(v)) return v;
+  } catch (e) {
+    console.log('[lang-read-err]', String(e.message || e));
+  }
+  return DEFAULT_LANG;
+}
+
+async function saveLang(env, chatId, lang) {
+  try {
+    await env.ACCESS.put('lang:' + chatId, lang);
+  } catch (e) {
+    console.log('[lang-write-err]', String(e.message || e));
+  }
+}
+
+// ---------- 语言选择面板 ----------
+async function showLangPanel(env, chatId, lang) {
+  const rows = [];
+  for (let i = 0; i < LANGS.length; i += 2) {
+    rows.push(LANGS.slice(i, i + 2).map(l => ({
+      text: (lang === l ? '✅ ' : '') + LANG_NAMES[l],
+      callback_data: 'lang:' + l,
+    })));
+  }
+  await sendTg(env, chatId, t(lang, 'lang_title'), { inline_keyboard: rows }, true);
+}
+
 // ---------- 帮助（带按钮） ----------
-async function sendHelp(env, chatId, extra) {
+async function sendHelp(env, chatId, lang, extra) {
   const helpText =
-    '🤖 <b>CF 监控 + AI 机器人</b>\n\n' +
+    t(lang, 'help_title') + '\n\n' +
     (extra ? extra + '\n\n' : '') +
-    '直接输入文字 = AI 对话（不用加命令）\n' +
-    '命令：\n' +
-    '· <code>/status</code> — 查询用量\n' +
-    '· <code>/setapi</code> — 添加自定义 API（不覆盖已有）\n' +
-    '· <code>/delapi</code> — 删除临时 API\n' +
-    '· <code>/setkey</code> — 修改任意 API 的 Key\n' +
-    '· <code>/setcode</code> — 设置两级邀请码（仅管理员）\n' +
-    '· <code>/mem</code> — 设置记忆深度（轮数/每条字数）\n' +
-    '· <code>/new</code> — 清空记忆，开新会话\n' +
-    '· <code>/help</code> — 显示本菜单\n\n' +
-    '底部快捷按钮随时可用👇';
+    t(lang, 'help_direct') + '\n' +
+    t(lang, 'cmd_label') + '\n' +
+    '· <code>/status</code> — ' + t(lang, 'cmd_status').split('—')[1].trim() + '\n' +
+    '· <code>/setapi</code> — ' + t(lang, 'cmd_setapi').split('—')[1].trim() + '\n' +
+    '· <code>/delapi</code> — ' + t(lang, 'cmd_delapi').split('—')[1].trim() + '\n' +
+    '· <code>/setkey</code> — ' + t(lang, 'cmd_setkey').split('—')[1].trim() + '\n' +
+    '· <code>/setcode</code> — ' + t(lang, 'cmd_setcode').split('—')[1].trim() + '\n' +
+    '· <code>/mem</code> — ' + t(lang, 'cmd_mem').split('—')[1].trim() + '\n' +
+    '· <code>/new</code> — ' + t(lang, 'cmd_new').split('—')[1].trim() + '\n' +
+    '· <code>/lang</code> — ' + t(lang, 'cmd_lang').split('—')[1].trim() + '\n' +
+    '· <code>/help</code> — ' + t(lang, 'cmd_help').split('—')[1].trim() + '\n\n' +
+    t(lang, 'help_footer');
   await sendTg(env, chatId, helpText, null);
 }
 
-// ---------- 常驻快捷键盘 ----------
-function replyKb() {
+// ---------- 常驻快捷键盘（按用户语言） ----------
+function replyKb(lang) {
   return {
     keyboard: [
-      [{ text: '📊 用量查询' }, { text: '🤖 AI 对话' }, { text: '🧠 模型选择' }],
-      [{ text: '🧠 记忆设置' }, { text: '🆕 新会话' }],
-      [{ text: '⚙️ 添加API' }, { text: '🗑️ 删除API' }, { text: '🔑 修改Key' }],
-      [{ text: '❓ 帮助' }],
+      [{ text: t(lang, 'btn_status') }, { text: t(lang, 'btn_ai') }, { text: t(lang, 'btn_models') }],
+      [{ text: t(lang, 'btn_mem') }, { text: t(lang, 'btn_new') }],
+      [{ text: t(lang, 'btn_addapi') }, { text: t(lang, 'btn_delapi') }, { text: t(lang, 'btn_key') }],
+      [{ text: t(lang, 'btn_help') }],
     ],
     resize_keyboard: true,
     one_time_keyboard: false,
   };
 }
 
-// ---------- Telegram 发送消息（默认带常驻快捷键盘） ----------
+// ---------- Telegram 发送消息（默认带常驻快捷键盘，键盘语言跟随用户偏好） ----------
 async function sendTg(env, chatId, text, inlineKb, noReplyKb) {
+  const lang = await getLang(env, chatId);
   const body = { chat_id: chatId, text, parse_mode: 'HTML' };
   if (inlineKb) body.reply_markup = JSON.stringify(inlineKb);
-  else if (!noReplyKb) body.reply_markup = JSON.stringify(replyKb());
+  else if (!noReplyKb) body.reply_markup = JSON.stringify(replyKb(lang));
   const r = await fetch(`https://api.telegram.org/bot${env.TG_BOT_TOKEN}/sendMessage`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -874,7 +896,7 @@ async function answerCb(env, cbId, text) {
 const WRK_DAILY_LIMIT = 100000; // Workers Free 每日请求上限（00:00 UTC 重置）
 const AI_DAILY_LIMIT = 10000;   // Workers AI 免费额度 Neurons/天（00:00 UTC 重置）
 
-async function cfStatus(env, chatId) {
+async function cfStatus(env, chatId, lang) {
   try {
     // 今日 00:00 UTC 起点
     const now = new Date();
@@ -912,20 +934,20 @@ async function cfStatus(env, chatId) {
     // 当前主模型
     const pref = await getPref(env, chatId);
     const apis = await getApis(env);
-    const curModel = describeCurrent(pref, apis);
+    const curModel = describeCurrent(pref, apis, lang);
 
-    let msg = '📊 <b>CF 用量</b>（今日，00:00 UTC 重置）\n\n';
-    msg += '⚙️ <b>Workers 请求</b>\n';
-    msg += '已用：<b>' + totalReq.toLocaleString() + '</b> / ' + WRK_DAILY_LIMIT.toLocaleString() + '\n';
-    msg += '剩余：' + Math.max(0, WRK_DAILY_LIMIT - totalReq).toLocaleString() + '\n';
-    msg += '子请求：' + totalSub.toLocaleString() + '\n\n';
-    msg += '🧠 <b>AI 用量（本 Bot）</b>\n';
-    msg += '已用：<b>' + aiUsed.toFixed(1) + '</b> / ' + AI_DAILY_LIMIT.toLocaleString() + ' Neurons\n';
-    msg += '剩余：' + Math.max(0, AI_DAILY_LIMIT - aiUsed).toFixed(1) + ' Neurons\n\n';
-    msg += '🎯 当前主模型：' + curModel;
+    let msg = t(lang, 'u_title') + '\n\n';
+    msg += t(lang, 'u_workers') + '\n';
+    msg += t(lang, 'u_used', { used: '<b>' + totalReq.toLocaleString() + '</b>', total: WRK_DAILY_LIMIT.toLocaleString() }) + '\n';
+    msg += t(lang, 'u_remaining', { left: Math.max(0, WRK_DAILY_LIMIT - totalReq).toLocaleString() }) + '\n';
+    msg += t(lang, 'u_sub', { sub: totalSub.toLocaleString() }) + '\n\n';
+    msg += t(lang, 'u_ai') + '\n';
+    msg += t(lang, 'u_used', { used: '<b>' + aiUsed.toFixed(1) + '</b>', total: AI_DAILY_LIMIT.toLocaleString() }) + ' Neurons\n';
+    msg += t(lang, 'u_remaining', { left: Math.max(0, AI_DAILY_LIMIT - aiUsed).toFixed(1) }) + ' Neurons\n\n';
+    msg += t(lang, 'u_model', { model: curModel });
     await sendTg(env, chatId, msg);
   } catch (e) {
-    await sendTg(env, chatId, '❌ 出错：' + escapeHtml(String(e.message || e)));
+    await sendTg(env, chatId, t(lang, 'u_err', { err: escapeHtml(String(e.message || e)) }));
   }
 }
 
@@ -933,18 +955,31 @@ async function cfStatus(env, chatId) {
 // AI 对话（主用 Cloudflare 免费模型，自定义 API 可选，带多轮记忆）
 // ============================================================
 
-const SYSTEM_PROMPT = '你是一个乐于助人的中文AI助手，请用简洁清晰、自然连贯的中文回答用户问题。';
+// 系统提示按用户语言（让模型用对应语言回答）
+const SYSTEM_PROMPTS = {
+  zh: '你是一个乐于助人的中文AI助手，请用简洁清晰、自然连贯的中文回答用户问题。',
+  en: 'You are a helpful AI assistant. Answer in concise, natural, clear English.',
+  ja: 'あなたは親切なAIアシスタントです。簡潔で自然な日本語で答えてください。',
+  ko: '당신은 도움이 되는 AI 어시스턴트입니다. 간결하고 자연스러운 한국어로 답변하세요.',
+  fr: 'Vous êtes un assistant IA serviable. Répondez en français, de manière concise et naturelle.',
+  de: 'Sie sind ein hilfreicher KI-Assistent. Antworten Sie kurz und natürlich auf Deutsch.',
+  es: 'Eres un asistente de IA servicial. Responde de forma concisa y natural en español.',
+  ru: 'Вы полезный ИИ-ассистент. Отвечайте кратко и естественно на русском языке.',
+};
 
 // ---------- 记忆深度设置（每人独立，KV cfg:mem:<chatId>） ----------
 // 档位：从少到多，只受模型上下文能力约束（上限约 12 万字符 ≈ 128K tokens）
+// 档位名称/描述在多语言字典里（mem_light / mem_light_d ...）
 const MEM_PRESETS = [
-  { id: 'light', name: '浅记忆', rounds: 1, len: 400, desc: '1轮·每条400字，最省' },
-  { id: 'std', name: '标准', rounds: 5, len: 1000, desc: '5轮·每条1000字，均衡' },
-  { id: 'mid', name: '中等', rounds: 10, len: 1500, desc: '10轮·每条1500字' },
-  { id: 'deep', name: '深度', rounds: 20, len: 2000, desc: '20轮·每条2000字' },
-  { id: 'max', name: '极深', rounds: 40, len: 3000, desc: '40轮·每条3000字，拉满' },
+  { id: 'light', rounds: 1, len: 400 },
+  { id: 'std', rounds: 5, len: 1000 },
+  { id: 'mid', rounds: 10, len: 1500 },
+  { id: 'deep', rounds: 20, len: 2000 },
+  { id: 'max', rounds: 40, len: 3000 },
 ];
 const MEM_MAX_CHARS = 120000; // 总字符上限（模型窗口保护）
+function memName(lang, id) { return t(lang, 'mem_' + id); }
+function memDesc(lang, id) { return t(lang, 'mem_' + id + '_d'); }
 
 async function getMem(env, chatId) {
   try {
@@ -966,88 +1001,87 @@ async function saveMem(env, chatId, mem) {
 }
 
 // ---------- 记忆设置面板 ----------
-async function showMemSettings(env, chatId) {
+async function showMemSettings(env, chatId, lang) {
   const mem = await getMem(env, chatId);
-  let msg = '🧠 <b>记忆深度设置</b>\n\n';
-  msg += '当前：<b>' + mem.rounds + ' 轮</b> × 每条 <b>' + mem.len + ' 字</b>（共约 ' + (mem.rounds * mem.len) + ' 字）\n\n';
-  msg += '档位从少到多，额度不设限，只受模型能力约束（上限约 12 万字符）\n\n';
+  let msg = t(lang, 'mem_title') + '\n\n';
+  msg += t(lang, 'mem_current', { rounds: '<b>' + mem.rounds + '</b>', len: '<b>' + mem.len + '</b>', total: mem.rounds * mem.len }) + '\n\n';
+  msg += t(lang, 'mem_desc') + '\n\n';
   for (const p of MEM_PRESETS) {
     const mark = mem.rounds === p.rounds && mem.len === p.len ? '✅ ' : '⚪ ';
-    msg += mark + '<b>' + p.name + '</b> — ' + p.desc + '\n';
+    msg += mark + '<b>' + memName(lang, p.id) + '</b> — ' + memDesc(lang, p.id) + '\n';
   }
-  msg += '\n自定义：发送 <code>/mem 轮数 每条字数</code>\n如 <code>/mem 30 2500</code>';
+  msg += '\n' + t(lang, 'mem_custom') + '\n' + t(lang, 'mem_custom_ex');
   const rows = [];
   for (let i = 0; i < MEM_PRESETS.length; i += 2) {
     rows.push(MEM_PRESETS.slice(i, i + 2).map(p => ({
-      text: (mem.rounds === p.rounds && mem.len === p.len ? '✅ ' : '') + p.name,
+      text: (mem.rounds === p.rounds && mem.len === p.len ? '✅ ' : '') + memName(lang, p.id),
       callback_data: 'mem:' + p.id,
     })));
   }
-  rows.push([{ text: '🆕 清空记忆·开新会话', callback_data: 'mem:clear' }]);
+  rows.push([{ text: t(lang, 'mem_btn_clear'), callback_data: 'mem:clear' }]);
   await sendTg(env, chatId, msg, { inline_keyboard: rows }, true);
 }
 
 // ---------- 记忆档位回调 ----------
-async function handleMemPick(env, chatId, data, msgId) {
+async function handleMemPick(env, chatId, lang, data, msgId) {
   const id = data.split(':')[1];
   const p = MEM_PRESETS.find(x => x.id === id);
   if (!p) return '';
   await saveMem(env, chatId, { rounds: p.rounds, len: p.len });
-  const newMsg = '🧠 <b>记忆深度设置</b>\n\n' +
-    '当前：<b>' + p.rounds + ' 轮</b> × 每条 <b>' + p.len + ' 字</b>\n\n' +
-    '✅ 已切换为 <b>' + p.name + '</b>：' + p.desc + '\n\n' +
-    '· 新对话立即生效，AI 将记住最近 ' + p.rounds + ' 轮问答\n' +
-    '· 自定义：/mem 轮数 每条字数';
-  const kb = { inline_keyboard: [[{ text: '✅ ' + p.name, callback_data: 'mem:' + p.id }]] };
+  const newMsg = t(lang, 'mem_title') + '\n\n' +
+    t(lang, 'mem_current', { rounds: '<b>' + p.rounds + '</b>', len: '<b>' + p.len + '</b>', total: p.rounds * p.len }) + '\n\n' +
+    t(lang, 'mem_done', { name: '<b>' + memName(lang, id) + '</b>', desc: memDesc(lang, id) }) + '\n\n' +
+    '· ' + t(lang, 'mem_custom') + '  <code>/mem ' + p.rounds + ' ' + p.len + '</code>';
+  const kb = { inline_keyboard: [[{ text: '✅ ' + memName(lang, id), callback_data: 'mem:' + p.id }]] };
   let edited = false;
   if (msgId) edited = await editTg(env, chatId, msgId, newMsg, kb);
   if (!edited) await sendTg(env, chatId, newMsg, kb, true);
-  return '✅ 已切换：' + p.name;
+  return t(lang, 'sw_ok', { name: memName(lang, id) });
 }
 
 // ---------- 清空记忆 / 开新会话 ----------
 // 从消息命令调用：直接删历史并确认；从记忆面板按钮调用：编辑面板显示已清空
-async function clearHist(env, chatId, msgId) {
+async function clearHist(env, chatId, lang, msgId) {
   try {
     await env.ACCESS.delete('hist:' + chatId);
   } catch (e) {
     console.log('[clear-hist-err]', String(e.message || e));
   }
-  const confirmText = '🆕 已清空记忆，开启新会话！\n\nAI 将不记得之前的对话。';
+  const confirmText = t(lang, 'mem_cleared');
   if (msgId) {
     const mem = await getMem(env, chatId);
-    const newMsg = '🧠 <b>记忆深度设置</b>\n\n' +
-      '当前：<b>' + mem.rounds + ' 轮</b> × 每条 <b>' + mem.len + ' 字</b>\n\n' +
-      '🆕 已清空记忆，开启新会话！';
-    const kb = { inline_keyboard: [[{ text: '🆕 清空记忆·新会话', callback_data: 'mem:clear' }]] };
+    const newMsg = t(lang, 'mem_title') + '\n\n' +
+      t(lang, 'mem_current', { rounds: '<b>' + mem.rounds + '</b>', len: '<b>' + mem.len + '</b>', total: mem.rounds * mem.len }) + '\n\n' +
+      t(lang, 'mem_cleared_panel');
+    const kb = { inline_keyboard: [[{ text: t(lang, 'mem_btn_clear'), callback_data: 'mem:clear' }]] };
     const edited = await editTg(env, chatId, msgId, newMsg, kb);
     if (!edited) await sendTg(env, chatId, newMsg, kb, true);
   } else {
     await sendTg(env, chatId, confirmText);
   }
-  return '🆕 已清空记忆';
+  return t(lang, 'mem_cleared_panel').split('!')[0];
 }
 
 // ---------- /mem 命令 ----------
-async function handleMem(env, chatId, text) {
+async function handleMem(env, chatId, lang, text) {
   const arg = text.replace(/^\/mem\s*/, '').trim();
   if (!arg) {
-    await showMemSettings(env, chatId);
+    await showMemSettings(env, chatId, lang);
     return;
   }
   const parts = arg.split(/\s+/);
   const rounds = parseInt(parts[0], 10);
   const len = parseInt(parts[1], 10);
   if (!rounds || !len || rounds < 1 || rounds > 100 || len < 100 || len > 4000) {
-    await sendTg(env, chatId, '❌ 格式：<code>/mem 轮数 每条字数</code>\n轮数 1~100，每条字数 100~4000\n如 <code>/mem 30 2500</code>');
+    await sendTg(env, chatId, t(lang, 'mem_err_fmt'));
     return;
   }
   if (rounds * len > MEM_MAX_CHARS) {
-    await sendTg(env, chatId, '❌ 超出模型窗口上限（约 12 万字符）。可减少轮数或每条字数，如 <code>/mem ' + Math.floor(MEM_MAX_CHARS / len) + ' ' + len + '</code>');
+    await sendTg(env, chatId, t(lang, 'mem_err_limit', { r: Math.floor(MEM_MAX_CHARS / len), len }));
     return;
   }
   await saveMem(env, chatId, { rounds, len });
-  await sendTg(env, chatId, '✅ 记忆已设置为：<b>' + rounds + ' 轮</b> × 每条 <b>' + len + ' 字</b>（共约 ' + (rounds * len) + ' 字）\n\n新对话立即生效');
+  await sendTg(env, chatId, t(lang, 'mem_set_done', { rounds: '<b>' + rounds + '</b>', len: '<b>' + len + '</b>', total: rounds * len }));
 }
 
 const HIST_MAX = 200; // KV 存储上限（1轮=1问1答=2条；最大 100 轮×2=200 条正好）
@@ -1073,7 +1107,7 @@ async function saveHist(env, chatId, hist) {
   }
 }
 
-async function aiChat(env, chatId, prompt) {
+async function aiChat(env, chatId, lang, prompt) {
   // 用"正在输入…"状态提示，思考完直接发正文（只出现一条消息）
   await fetch(`https://api.telegram.org/bot${env.TG_BOT_TOKEN}/sendChatAction`, {
     method: 'POST',
@@ -1087,9 +1121,11 @@ async function aiChat(env, chatId, prompt) {
   const mem = await getMem(env, chatId);
   const hist = await readHist(env, chatId, mem.rounds);
 
+  const systemPrompt = SYSTEM_PROMPTS[lang] || SYSTEM_PROMPTS[DEFAULT_LANG];
+
   // 组装带历史的 messages（历史每条按个人设置截断，节省 tokens）
   const buildMessages = (userText) => [
-    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'system', content: systemPrompt },
     ...hist.map(h => ({ role: h.role === 'assistant' ? 'assistant' : 'user', content: String(h.content).slice(0, mem.len) })),
     { role: 'user', content: String(userText).slice(0, 2000) },
   ];
@@ -1138,7 +1174,7 @@ async function aiChat(env, chatId, prompt) {
         }
       }
       // 自定义 API 全部失败 → 回退 Cloudflare 免费模型（附提示）
-      extFallbackNote = '⚠️ ' + escapeHtml(api.name) + ' 所有模型调用失败，已临时使用 CF 免费模型回复。';
+      extFallbackNote = t(lang, 'ai_fb_note', { name: escapeHtml(api.name) });
     }
   }
 
@@ -1162,7 +1198,7 @@ async function aiChat(env, chatId, prompt) {
         resp.result?.response ||
         JSON.stringify(resp);
       const curM = CF_MODELS.find(m => m.full === full);
-      const displayName = curM ? curM.name : full.split('/').pop();
+      const displayName = curM ? cfName(lang, curM.id) : full.split('/').pop();
       const note = extFallbackNote ? '\n\n' + extFallbackNote : '';
       await sendTg(env, chatId, '🤖 <b>' + displayName + '</b>\n\n' + escapeHtml(reply.slice(0, 4000)) + note);
       await recordTurn(reply);
@@ -1183,7 +1219,7 @@ async function aiChat(env, chatId, prompt) {
       console.log('[cf-ai-err]', full, String(e.message || e));
     }
   }
-  await sendTg(env, chatId, '❌ AI 调用失败，请检查 Workers AI 绑定或额度。');
+  await sendTg(env, chatId, t(lang, 'ai_fail'));
 }
 
 function escapeHtml(s) {

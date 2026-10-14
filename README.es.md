@@ -171,6 +171,7 @@ curl "https://<tu-dominio-worker>/setup" -H "X-Setup-Key: <SETUP_KEY>"
 | `/ai pregunta` | Chat de IA (o simplemente escribe texto) | Todos |
 | `/mem turnos caracteres` | Configurar profundidad de memoria | Todos |
 | `/new` | Borrar memoria, nueva sesión | Todos |
+| `/lang` | Cambiar idioma (8 idiomas) | Todos |
 | `/setapi` | Agregar API personalizada | Admin |
 | `/delapi` | Eliminar API temporal | Admin |
 | `/setkey` | Cambiar clave de API | Admin |

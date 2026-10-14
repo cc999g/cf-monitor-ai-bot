@@ -171,6 +171,7 @@ curl "https://<你的worker域名>/setup" -H "X-Setup-Key: <SETUP_KEY>"
 | `/ai 问题` | AI 对话（也可直接输入文字） | 全员 |
 | `/mem 轮数 字数` | 设置记忆深度 | 全员 |
 | `/new` | 清空记忆开新会话 | 全员 |
+| `/lang` | 切换语言（8 国） | 全员 |
 | `/setapi` | 添加自定义 API | 管理员 |
 | `/delapi` | 删除临时 API | 管理员 |
 | `/setkey` | 修改 API Key | 管理员 |
