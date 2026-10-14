@@ -111,7 +111,7 @@ curl "https://cf-monitor-ai-bot.<你的子域名>.workers.dev/setup" -H "X-Setup
 
 ### 🔧 方式二：手动部署
 
-#### 1. 准备
+### 1. 准备
 - 一个 Cloudflare 账户
 - 一个 Telegram Bot Token（找 @BotFather 创建）
 - Node.js 18+ 环境
