@@ -100,7 +100,7 @@ if [ -n "$WORKER_SUBDOMAIN" ]; then
   echo "最后一步，注册 Webhook："
   echo "  curl \"https://cf-monitor-ai-bot.$WORKER_SUBDOMAIN.workers.dev/setup\" -H \"X-Setup-Key: $SETUP_KEY\""
 else
-  echo "最后一步，注册 Webhook（把 <子域名> 换成你的，例如 nezsad）："
+  echo "最后一步，注册 Webhook（把 <子域名> 换成你的，例如 abc123）："
   echo "  curl \"https://cf-monitor-ai-bot.<子域名>.workers.dev/setup\" -H \"X-Setup-Key: $SETUP_KEY\""
 fi
 echo ""

@@ -103,7 +103,7 @@ if ($cfg['WORKER_SUBDOMAIN']) {
     Write-Host "`n最后一步，注册 Webhook（复制到 CMD 运行）："
     Write-Host "  curl `"https://cf-monitor-ai-bot.$($cfg['WORKER_SUBDOMAIN']).workers.dev/setup`" -H `"X-Setup-Key: $($cfg['SETUP_KEY'])`"" -ForegroundColor Cyan
 } else {
-    Write-Host "`n最后一步，注册 Webhook（把 <子域名> 换成你的，例如 nezsad）："
+    Write-Host "`n最后一步，注册 Webhook（把 <子域名> 换成你的，例如 abc123）："
     Write-Host "  curl `"https://cf-monitor-ai-bot.<子域名>.workers.dev/setup`" -H `"X-Setup-Key: $($cfg['SETUP_KEY'])`"" -ForegroundColor Cyan
 }
 Write-Host "`n在 Telegram 里用管理员码激活后即可使用。`n" -ForegroundColor Gray
