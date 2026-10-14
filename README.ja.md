@@ -178,6 +178,35 @@ curl "https://<あなたのWorkerドメイン>/setup" -H "X-Setup-Key: <SETUP_KE
 
 ---
 
+## 🔜 予定 / 未実装機能
+
+- **マルチセッション（切替可能）**：ChatGPT のように複数セッションを作成・切替、各セッション独立した記憶。設計は完了済みだが保留中。必要なら後日開発可。
+- **`/kick` メンバー削除**：管理者がワンタップでアクティベート済みユーザーを削除（無効化）。不正利用防止用。未実装。
+- **招待コードの平文**：招待コードを含むメッセージは Telegram のチャット履歴に残る — 設計上のトレードオフ。気になる場合は `/setcode` で定期的に変更。
+
+## ⚠️ 注意事項
+
+1. **招待コード平文**：招待コードを含むメッセージはチャット履歴に残ります。定期的に変更してください。
+2. **クォータ基準**：Workers 10万リクエスト/日、Workers AI 1万 Neurons/日、00:00 UTC リセット。「最深」記憶（40ターン×3000字）は呼び出しごとの Neurons 消費が顕著に増加。高頻度利用時は残りクォータを確認（`/status`）。
+3. **リレー API のモデル名は実態と異なる場合がある**：サードパーティ代理のモデル名が実際のルートと一致しない場合があります。追加後に実測してください。内蔵モデルは実測済み。
+4. **API Token 権限**：`/status` は GraphQL 権限が必要。Edit All Resources レベルの Token を使用しないと Authentication error になります。
+5. **管理ルートはヘッダー認証**：`/setup`・`/debug` は `X-Setup-Key` ヘッダー必須。ブラウザで直接開くと 403（curl を使用）。
+6. **KV が唯一の正**：設定は KV に保存。`/setapi` `/setkey` `/setcode` は即時反映、再デプロイ不要。
+7. **API 削除時の自動修復**：削除された一時 API を使用中のユーザーは自動的に Cloudflare 無料モデルへ切替。
+
+## 🐛 デプロイで陥りがちな落とし穴
+
+1. **Webhook 登録忘れ**：デプロイ後は必ず `/setup` を実行（`X-Setup-Key` 付き）。しないと bot はメッセージを受信できません。
+2. **`TG_WEBHOOK_SECRET` を変更して再登録していない**：403 になります。`/setup` を再実行するだけ。
+3. **API Token 権限不足**：`/status` が `[{"code":10000,"message":"Authentication error"}]` → Dashboard で Edit All Resources の Token に交換。
+4. **wrangler KV に `--remote` がない**：`wrangler kv key get/put` はデフォルトでローカルエミュレータを操作。クラウドをデバッグするときは `--remote` を追加。
+5. **カスタム API の URL にプロトコルがない**：`http://` か `https://` で始まる必要あり。そうでないと拒否。
+6. **PowerShell 実行ポリシー**：deploy.ps1 が直接実行できない場合、`powershell -ExecutionPolicy Bypass -File .\deploy.ps1` を使用。
+7. **メモリ設定が上限超過**：`/mem ターン数 文字数` は合計約12万文字を超えると拒否。ターン数か文字数を減らす。
+8. **長い回答は切り詰められる**：CF モデル max_tokens 4096、カスタム API 2000。非常に長い回答の切詰めは正常です。
+
+---
+
 ## 🔒 セキュリティ
 - すべてのシークレットは Cloudflare Secrets に保管、コードに含めない
 - KV が設定の唯一の正（`cfg:apis`）、変更は即時反映
@@ -185,3 +214,7 @@ curl "https://<あなたのWorkerドメイン>/setup" -H "X-Setup-Key: <SETUP_KE
 
 ## 📄 ライセンス
 MIT
+
+---
+
+*本プロジェクトは AI の支援により生成されました。*

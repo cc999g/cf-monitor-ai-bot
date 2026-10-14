@@ -178,6 +178,35 @@ curl "https://<tu-dominio-worker>/setup" -H "X-Setup-Key: <SETUP_KEY>"
 
 ---
 
+## 🔜 Planificado / No implementado
+
+- **Sesiones múltiples (conmutables)** : crear varias sesiones como ChatGPT y cambiar entre ellas, memoria independiente por sesión. El diseño está terminado pero en pausa; se puede desarrollar después si es necesario.
+- **`/kick` eliminar miembro** : el administrador elimina a un usuario activado con un toque (revocación de activación), para prevenir abusos. Aún no implementado.
+- **Códigos de invitación en texto plano** : los mensajes con códigos quedan en el historial de Telegram — una compensación de diseño; cambie los códigos periódicamente con `/setcode` si le preocupa.
+
+## ⚠️ Notas
+
+1. **Códigos de invitación en texto plano** : los mensajes con códigos quedan en el historial del chat; rótelos periódicamente.
+2. **Base de cuota** : Workers 100 K solicitudes/día, Workers AI 10 K Neurons/día, restablece 00:00 UTC; la memoria «Máximo» (40 turnos × 3000 car.) aumenta notablemente los Neurons por llamada — vigile la cuota restante en uso intensivo (`/status`).
+3. **Los nombres de modelo de un relé pueden no coincidir con la realidad** : los nombres de proxies de terceros no siempre enrutan al modelo real; pruebe después de añadir. Los modelos integrados ya están probados.
+4. **Permisos del token API** : `/status` necesita permiso GraphQL — use un token Edit All Resources, si no, error de autenticación.
+5. **Rutas de administración con autenticación por cabecera** : `/setup` y `/debug` exigen la cabecera `X-Setup-Key`; abrirlas directamente en un navegador devuelve 403 (use curl).
+6. **KV es la única fuente de verdad** : la configuración vive en KV; `/setapi` `/setkey` `/setcode` surten efecto de inmediato, sin redespliegue.
+7. **Autocuración al eliminar una API** : los usuarios de una API temporal eliminada vuelven automáticamente a los modelos gratuitos de Cloudflare.
+
+## 🐛 Errores comunes de implementación
+
+1. **Webhook sin registrar** : tras implementar, ejecute `/setup` (con `X-Setup-Key`), si no el bot no recibe mensajes.
+2. **`TG_WEBHOOK_SECRET` cambiado sin re-registrar** : obtiene 403; vuelva a ejecutar `/setup`.
+3. **Permisos de token insuficientes** : `/status` informa `[{"code":10000,"message":"Authentication error"}]` → cambie al token Edit All Resources en el Dashboard.
+4. **wrangler KV sin `--remote`** : `wrangler kv key get/put` opera sobre el emulador local por defecto; añada `--remote` al depurar la nube.
+5. **URL de API personalizada sin protocolo** : debe empezar por `http://` o `https://`, si no se rechaza.
+6. **Política de ejecución de PowerShell** : si deploy.ps1 se bloquea, use `powershell -ExecutionPolicy Bypass -File .\deploy.ps1`.
+7. **Ajustes de memoria fuera del límite** : `/mem turnos caracteres` se rechaza cuando el total supera ~120 K caracteres; reduzca turnos o caracteres.
+8. **Respuestas largas truncadas** : modelos CF max_tokens 4096, APIs personalizadas 2000 — el truncamiento de respuestas muy largas es normal.
+
+---
+
 ## 🔒 Notas de seguridad
 - Todos los secretos viven en Cloudflare Secrets, nunca en el código
 - KV es la única fuente de verdad para la configuración (`cfg:apis`), los cambios surten efecto de inmediato
@@ -185,3 +214,7 @@ curl "https://<tu-dominio-worker>/setup" -H "X-Setup-Key: <SETUP_KEY>"
 
 ## 📄 Licencia
 MIT
+
+---
+
+*Este proyecto fue generado con ayuda de IA.*

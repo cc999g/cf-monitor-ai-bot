@@ -178,6 +178,35 @@ curl "https://<your-worker-domain>/setup" -H "X-Setup-Key: <SETUP_KEY>"
 
 ---
 
+## 🔜 Planned / Not Implemented
+
+- **Multi-session (switchable)**: create multiple sessions like ChatGPT, switch between them, each with independent memory. The design is complete but paused; can be developed later if needed.
+- **`/kick` remove member**: admin removes an activated user with one tap (revoke activation) to prevent abuse. Not implemented yet.
+- **Invite codes in plain text**: messages containing invite codes stay in the Telegram chat history — a design trade-off; change codes regularly with `/setcode` if concerned.
+
+## ⚠️ Notes
+
+1. **Invite codes in plain text**: messages with invite codes remain in Telegram chat history; rotate them periodically.
+2. **Quota basis**: Workers 100K requests/day, Workers AI 10K Neurons/day, resets 00:00 UTC; the "Max" memory preset (40 rounds × 3000 chars) noticeably increases Neurons per call — watch remaining quota on heavy use (`/status`).
+3. **Relay API model names may not match reality**: third-party proxy model names may not route to the actual model; test after adding. Built-in models are already tested.
+4. **API Token permissions**: `/status` needs GraphQL permission — use an Edit All Resources token, otherwise it reports Authentication error.
+5. **Admin routes use header auth**: `/setup` and `/debug` require the `X-Setup-Key` header; opening them in a browser directly returns 403 (use curl).
+6. **KV is the single source of truth**: config lives in KV; `/setapi` `/setkey` `/setcode` take effect instantly, no redeploy needed.
+7. **Self-healing on API deletion**: users using a deleted temporary API are automatically switched back to Cloudflare free models.
+
+## 🐛 Common Deployment Pitfalls
+
+1. **Forgot to register the Webhook**: after deploying you must run `/setup` (with `X-Setup-Key`), otherwise the bot receives no messages.
+2. **Changed `TG_WEBHOOK_SECRET` without re-registering**: you get 403; just re-run `/setup`.
+3. **Insufficient API Token permissions**: `/status` reports `[{"code":10000,"message":"Authentication error"}]` → replace the token with Edit All Resources in the Dashboard.
+4. **wrangler KV without `--remote`**: `wrangler kv key get/put` operates on the local emulator by default; add `--remote` when debugging the cloud.
+5. **Custom API URL missing the protocol**: must start with `http://` or `https://`, otherwise it's rejected.
+6. **PowerShell execution policy**: running deploy.ps1 directly may be blocked; use `powershell -ExecutionPolicy Bypass -File .\deploy.ps1`.
+7. **Memory settings over the limit**: `/mem rounds chars` is rejected when the total exceeds ~120K chars; reduce rounds or chars.
+8. **Long replies are truncated**: CF models max_tokens 4096, custom APIs 2000 — truncation of very long answers is expected.
+
+---
+
 ## 🔒 Security Notes
 - All secrets live in Cloudflare Secrets, never in code
 - KV is the single source of truth for config (`cfg:apis`), changes take effect instantly
@@ -185,3 +214,7 @@ curl "https://<your-worker-domain>/setup" -H "X-Setup-Key: <SETUP_KEY>"
 
 ## 📄 License
 MIT
+
+---
+
+*This project was generated with AI assistance.*

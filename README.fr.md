@@ -178,6 +178,35 @@ curl "https://<votre-domaine-worker>/setup" -H "X-Setup-Key: <SETUP_KEY>"
 
 ---
 
+## 🔜 Prévu / Non implémenté
+
+- **Sessions multiples (commutables)** : créer plusieurs sessions comme ChatGPT, basculer entre elles, mémoire indépendante par session. La conception est terminée mais en pause ; développement possible plus tard.
+- **`/kick` supprimer un membre** : l'admin retire un utilisateur activé en un clic (révocation), pour prévenir les abus. Pas encore implémenté.
+- **Codes d'invitation en clair** : les messages contenant les codes restent dans l'historique Telegram — un compromis de conception ; changez les codes régulièrement avec `/setcode` si besoin.
+
+## ⚠️ Notes
+
+1. **Codes d'invitation en clair** : les messages avec les codes restent dans l'historique du chat ; faites-les tourner périodiquement.
+2. **Base de quota** : Workers 100 K requêtes/jour, Workers AI 10 K Neurons/jour, réinitialisation 00:00 UTC ; la mémoire « Max » (40 tours × 3000 car.) augmente nettement les Neurons par appel — surveillez le quota restant en usage intensif (`/status`).
+3. **Les noms de modèles d'un relais peuvent ne pas correspondre à la réalité** : les noms des proxies tiers ne routent pas forcément vers le vrai modèle ; testez après ajout. Les modèles intégrés sont déjà testés.
+4. **Permissions du jeton API** : `/status` nécessite la permission GraphQL — utilisez un jeton Edit All Resources, sinon erreur d'authentification.
+5. **Routes admin avec authentification par en-tête** : `/setup` et `/debug` exigent l'en-tête `X-Setup-Key` ; ouvrir directement dans un navigateur renvoie 403 (utilisez curl).
+6. **KV est la source unique de vérité** : la config vit dans KV ; `/setapi` `/setkey` `/setcode` prennent effet immédiatement, aucun redéploiement.
+7. **Auto-réparation à la suppression d'une API** : les utilisateurs d'une API temporaire supprimée repassent automatiquement aux modèles gratuits Cloudflare.
+
+## 🐛 Pièges de déploiement courants
+
+1. **Webhook non enregistré** : après déploiement, exécutez `/setup` (avec `X-Setup-Key`), sinon le bot ne reçoit aucun message.
+2. **`TG_WEBHOOK_SECRET` modifié sans réenregistrement** : vous obtenez 403 ; relancez simplement `/setup`.
+3. **Permissions de jeton insuffisantes** : `/status` renvoie `[{"code":10000,"message":"Authentication error"}]` → remplacez le jeton par Edit All Resources dans le Dashboard.
+4. **wrangler KV sans `--remote`** : `wrangler kv key get/put` opère sur l'émulateur local par défaut ; ajoutez `--remote` pour déboguer le cloud.
+5. **URL d'API personnalisée sans protocole** : doit commencer par `http://` ou `https://`, sinon rejetée.
+6. **Politique d'exécution PowerShell** : si deploy.ps1 est bloqué, utilisez `powershell -ExecutionPolicy Bypass -File .\deploy.ps1`.
+7. **Réglages de mémoire hors limite** : `/mem tours caractères` est rejeté quand le total dépasse ~120 K caractères ; réduisez les tours ou les caractères.
+8. **Réponses longues tronquées** : modèles CF max_tokens 4096, API personnalisées 2000 — la troncature des très longues réponses est normale.
+
+---
+
 ## 🔒 Notes de sécurité
 - Tous les secrets vivent dans Cloudflare Secrets, jamais dans le code
 - KV est la source unique de vérité pour la config (`cfg:apis`), les modifications prennent effet immédiatement
@@ -185,3 +214,7 @@ curl "https://<votre-domaine-worker>/setup" -H "X-Setup-Key: <SETUP_KEY>"
 
 ## 📄 Licence
 MIT
+
+---
+
+*Ce projet a été généré avec l'aide de l'IA.*

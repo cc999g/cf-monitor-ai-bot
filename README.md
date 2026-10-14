@@ -178,6 +178,35 @@ curl "https://<你的worker域名>/setup" -H "X-Setup-Key: <SETUP_KEY>"
 
 ---
 
+## 🔜 规划中 / 未实现功能
+
+- **多会话（可切换）**：像 ChatGPT 一样建立多个会话、互相切换，每个会话独立记忆。设计已完成，因暂缓未实现；如后续需要可继续开发。
+- **`/kick` 移除成员**：管理员一键将已激活用户移出（撤销激活），防止滥用。尚未实现。
+- **邀请码明文**：新成员输入邀请码的消息会留在 Telegram 聊天记录中，属设计取舍；介意请定期用 `/setcode` 更换。
+
+## ⚠️ 注意事项
+
+1. **邀请码明文**：输入邀请码的消息会留在 Telegram 聊天记录，建议定期更换。
+2. **额度口径**：Workers 10 万请求/日、Workers AI 1 万 Neurons/日，00:00 UTC 重置；「极深」记忆（40 轮×3000 字）每次调用消耗 Neurons 显著增加，高频使用请注意剩余额度（`/status` 可查）。
+3. **中转 API 模型名可能名不副实**：第三方代理的模型名不一定路由到对应模型，添加后请实测；本项目内置模型均已实测。
+4. **API Token 权限**：`/status` 用量查询需要 GraphQL 权限，建议使用 Edit All Resources 级别 Token，否则报 Authentication error。
+5. **管理入口为请求头校验**：`/setup`、`/debug` 需带 `X-Setup-Key` 请求头，浏览器直接打开会 403（用 curl 命令访问）。
+6. **KV 是唯一权威**：配置以 KV 为准，`/setapi` `/setkey` `/setcode` 修改立即生效，无需重新部署。
+7. **临时 API 被删自动自愈**：正在使用被删除 API 的用户会自动切回 Cloudflare 免费模型。
+
+## 🐛 部署常见踩坑
+
+1. **忘记注册 Webhook**：部署后必须执行 `/setup` 注册（带 `X-Setup-Key`），否则 bot 收不到任何消息。
+2. **改了 `TG_WEBHOOK_SECRET` 没重新注册**：会返回 403，重新执行 `/setup` 即可。
+3. **API Token 权限不足**：`/status` 报 `[{"code":10000,"message":"Authentication error"}]` → 去 Dashboard 换 Edit All Resources 的 Token。
+4. **wrangler 操作 KV 不带 `--remote`**：`wrangler kv key get/put` 默认操作本地模拟，查不到云端数据；调试时加 `--remote`。
+5. **自定义 API 地址没写协议头**：必须 `http://` 或 `https://` 开头，否则被拦截。
+6. **PowerShell 执行策略**：直接运行 deploy.ps1 可能被拦截，用 `powershell -ExecutionPolicy Bypass -File .\deploy.ps1`。
+7. **记忆设置超出上限**：`/mem 轮数 字数` 总字符超过 12 万会被拒绝，适当减少轮数或字数。
+8. **长回复被截断**：CF 模型 max_tokens 4096、自定义 API 2000，超长回答被截断属正常现象。
+
+---
+
 ## 🔒 安全说明
 - 所有密钥存 Cloudflare Secrets，不入代码
 - KV 是配置唯一权威（`cfg:apis`），修改立即生效
@@ -185,3 +214,7 @@ curl "https://<你的worker域名>/setup" -H "X-Setup-Key: <SETUP_KEY>"
 
 ## 📄 License
 MIT
+
+---
+
+*本项目由 AI 辅助生成。*

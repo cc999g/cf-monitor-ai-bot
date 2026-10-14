@@ -178,6 +178,35 @@ curl "https://<당신의-Worker-도메인>/setup" -H "X-Setup-Key: <SETUP_KEY>"
 
 ---
 
+## 🔜 예정 / 미구현 기능
+
+- **멀티 세션(전환 가능)**: ChatGPT처럼 여러 세션을 만들고 전환하며, 각 세션별 독립 메모리. 설계는 완료됐지만 보류 중. 필요하면 나중에 개발 가능.
+- **`/kick` 멤버 제거**: 관리자가 원탭으로 활성화된 사용자를 제거(활성화 취소), 남용 방지용. 아직 미구현.
+- **초대 코드 평문**: 초대 코드가 포함된 메시지는 Telegram 채팅 기록에 남습니다 — 설계상 트레이드오프. 우려되면 `/setcode`로 정기적으로 변경.
+
+## ⚠️ 주의사항
+
+1. **초대 코드 평문**: 초대 코드가 포함된 메시지는 채팅 기록에 남습니다. 정기적으로 변경하세요.
+2. **쿼터 기준**: Workers 10만 요청/일, Workers AI 1만 Neurons/일, 00:00 UTC 리셋. '최대' 메모리(40턴×3000자)는 호출당 Neurons 소비가 크게 증가. 고빈도 사용 시 잔여 쿼터 확인(`/status`).
+3. **릴레이 API 모델명이 실제와 다를 수 있음**: 서드파티 프록시의 모델명이 실제 라우팅 모델과 다를 수 있습니다. 추가 후 실측하세요. 내장 모델은 실측 완료.
+4. **API Token 권한**: `/status`는 GraphQL 권한 필요. Edit All Resources 수준 토큰을 사용하지 않으면 Authentication error 발생.
+5. **관리 라우트는 헤더 인증**: `/setup`·`/debug`는 `X-Setup-Key` 헤더 필수. 브라우저로 직접 열면 403 (curl 사용).
+6. **KV가 단일 권위**: 설정은 KV에 저장. `/setapi` `/setkey` `/setcode`는 즉시 반영, 재배포 불필요.
+7. **API 삭제 시 자동 복구**: 삭제된 임시 API를 사용 중인 사용자는 자동으로 Cloudflare 무료 모델로 전환.
+
+## 🐛 배포 시 자주 실수하는 부분
+
+1. **Webhook 등록 잊음**: 배포 후 반드시 `/setup` 실행(`X-Setup-Key` 포함). 안 하면 bot이 메시지를 받지 못합니다.
+2. **`TG_WEBHOOK_SECRET` 변경 후 재등록 안 함**: 403 발생. `/setup`을 다시 실행하면 됩니다.
+3. **API Token 권한 부족**: `/status`가 `[{"code":10000,"message":"Authentication error"}]` → Dashboard에서 Edit All Resources 토큰으로 교체.
+4. **wrangler KV에 `--remote` 없음**: `wrangler kv key get/put`은 기본적으로 로컬 에뮬레이터를 조작. 클라우드를 디버깅할 때 `--remote` 추가.
+5. **커스텀 API URL에 프로토콜 없음**: `http://` 또는 `https://`로 시작해야 함. 아니면 거부됨.
+6. **PowerShell 실행 정책**: deploy.ps1이 직접 실행되지 않으면 `powershell -ExecutionPolicy Bypass -File .\deploy.ps1` 사용.
+7. **메모리 설정 상한 초과**: `/mem 턴수 글자수`는 합계 약 12만 자를 초과하면 거부. 턴수나 글자수를 줄이세요.
+8. **긴 답변은 잘림**: CF 모델 max_tokens 4096, 커스텀 API 2000. 매우 긴 답변의 잘림은 정상입니다.
+
+---
+
 ## 🔒 보안
 - 모든 시크릿은 Cloudflare Secrets에 저장, 코드에 미포함
 - KV가 설정의 단일 권위(`cfg:apis`), 변경 즉시 반영
@@ -185,3 +214,7 @@ curl "https://<당신의-Worker-도메인>/setup" -H "X-Setup-Key: <SETUP_KEY>"
 
 ## 📄 라이선스
 MIT
+
+---
+
+*이 프로젝트는 AI의 도움으로 생성되었습니다.*
