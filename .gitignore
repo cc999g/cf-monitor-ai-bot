@@ -1,0 +1,10 @@
+# 本地运行状态与凭据，绝不上传
+.wrangler/
+node_modules/
+.env
+*.local
+
+# 测试/调试产物
+deployed.txt
+models*.json
+models*.jsonl
