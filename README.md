@@ -1,3 +1,11 @@
+<div align="center">
+
+**🌐 语言 / Language**
+
+[🇨🇳 中文](README.md) · [🇺🇸 English](README.en.md) · [🇯🇵 日本語](README.ja.md) · [🇰🇷 한국어](README.ko.md) · [🇫🇷 Français](README.fr.md) · [🇩🇪 Deutsch](README.de.md) · [🇪🇸 Español](README.es.md) · [🇷🇺 Русский](README.ru.md)
+
+</div>
+
 # CF Monitor AI Bot
 
 一个运行在 **Cloudflare Workers** 上的 Telegram 机器人：**Cloudflare 账户用量监控 + 多模型 AI 对话**。
