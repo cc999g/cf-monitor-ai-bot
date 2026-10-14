@@ -55,7 +55,63 @@ Telegram 用户 → Webhook(签名校验) → Cloudflare Worker
 
 ## 🚀 部署步骤
 
-### 1. 准备
+### ⚡ 方式一：一键部署（推荐）
+
+只需要填 4 个必填项，其余自动生成：
+
+**1. 准备**
+- 一个 Cloudflare 账户
+- 一个 Telegram Bot Token（找 @BotFather 创建）
+- Node.js 18+（部署机器需要）
+
+**2. 填写配置**
+
+```bash
+# 复制模板
+cp .env.example .env
+```
+
+编辑 `.env`，必填 4 项：
+
+```ini
+CF_API_TOKEN=你的Cloudflare API Token
+CF_ACCOUNT_ID=你的Cloudflare账户ID
+TG_BOT_TOKEN=你的Telegram Bot Token
+TG_CHAT_ID=你的Telegram Chat ID
+```
+
+> 其余项（邀请码、SETUP_KEY、Webhook 密钥）留空即可，脚本自动生成并打印。
+
+**3. 运行部署脚本**
+
+Windows（PowerShell）：
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy.ps1
+```
+
+Linux / macOS：
+```bash
+chmod +x deploy.sh && ./deploy.sh
+```
+
+脚本会自动完成：创建/复用 KV 命名空间 → 生成缺失密钥 → 配置 wrangler → 设置全部 Secrets → 部署 Worker。
+
+**4. 注册 Webhook**
+
+部署完成后脚本会打印一条 curl 命令（已带生成的 SETUP_KEY），复制到终端运行即可：
+
+```bash
+curl "https://cf-monitor-ai-bot.<你的子域名>.workers.dev/setup" -H "X-Setup-Key: <SETUP_KEY>"
+```
+
+**5. 开始使用**
+在 Telegram 里给 bot 发管理员码（或成员码）激活即可。
+
+---
+
+### 🔧 方式二：手动部署
+
+#### 1. 准备
 - 一个 Cloudflare 账户
 - 一个 Telegram Bot Token（找 @BotFather 创建）
 - Node.js 18+ 环境
@@ -65,7 +121,6 @@ Cloudflare Dashboard → Workers & Pages → KV → 创建命名空间，把 ID 
 
 ### 3. 配置 `wrangler.toml`
 把 `<占位符>` 替换为你的值：KV 命名空间 ID、CF 账户 ID、TG Chat ID。
-
 ### 4. 配置 Secrets
 
 ```bash

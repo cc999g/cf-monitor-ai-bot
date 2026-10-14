@@ -2,6 +2,9 @@
 .wrangler/
 node_modules/
 .env
+.env.*
+!.env.example
+wrangler.local.toml
 *.local
 
 # 测试/调试产物
