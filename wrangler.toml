@@ -22,3 +22,6 @@ crons = []
 CF_ACCOUNT_ID = "<你的Cloudflare账户ID>"
 # 超级管理员 Telegram Chat ID（永远是管理员，免邀请码）
 TG_CHAT_ID = "<你的Telegram Chat ID>"
+# 授权群 ID（群聊鉴权默认开启，可留空=仅邀请码）：
+# 群主/群管理员 → 管理员权限；群成员 → 普通成员权限；不在群 → 走邀请码激活
+AUTH_GROUP_ID = "<你的授权群ID，如 -1001234567890>"

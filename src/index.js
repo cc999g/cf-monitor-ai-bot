@@ -210,7 +210,7 @@ export default {
           await sendTg(env, chatId, t(lang, 'auth_fail'));
         }
       } else {
-        await sendTg(env, chatId, t(lang, 'auth_hint'));
+        await sendTg(env, chatId, env.AUTH_GROUP_ID ? t(lang, 'auth_group') : t(lang, 'auth_hint'));
       }
       return new Response('ok');
     }
@@ -708,13 +708,51 @@ async function handleDelApi(env, chatId, lang, text) {
 // 访问控制 / 帮助 / 键盘
 // ============================================================
 
+// ---------- 群聊鉴权（默认）：getChatMember 验证是否在授权群内 ----------
+// 群主/群管理员 → 'admin'；群成员 → 'member'；不在群 → null（走邀请码兜底）
+// 结果缓存 KV gauth:<chatId>（3600s）；'no' = 不在群（300s 短缓存，避免频繁调 TG API）
+async function groupRole(env, chatId) {
+  if (!env.AUTH_GROUP_ID || !env.TG_BOT_TOKEN) return null;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${env.TG_BOT_TOKEN}/getChatMember`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chat_id: Number(env.AUTH_GROUP_ID), user_id: Number(chatId) }),
+    }).then(r => r.json());
+    if (!res.ok || !res.result) return null;
+    const st = res.result.status;
+    if (st === 'creator' || st === 'administrator') return 'admin';
+    if (st === 'member' || st === 'restricted') return 'member';
+    return null; // left/kicked 不在群
+  } catch (e) {
+    console.log('[group-role-err]', String(e.message || e));
+    return null;
+  }
+}
+
 // ---------- 角色获取 ----------
 // 返回 'admin' | 'member' | null
-// 超级管理员（TG_CHAT_ID）永远是 admin；KV 记录值：
-//   'admin' → 管理员；'member' → 普通成员；旧版数字时间戳 → 视为 admin（原来用管理员邀请码激活）
+// 优先级：超级管理员（TG_CHAT_ID）永远 admin → 群聊鉴权（默认，AUTH_GROUP_ID 配置时）
+//         → 邀请码激活记录（KV chat:<id>：admin/member/旧版时间戳视为 admin）
 async function getRole(env, chatId) {
   const isBoss = env.TG_CHAT_ID && String(chatId) === String(env.TG_CHAT_ID);
   if (isBoss) return 'admin';
+  if (env.AUTH_GROUP_ID) {
+    try {
+      const cached = await env.ACCESS.get('gauth:' + chatId);
+      if (cached === 'admin' || cached === 'member') return cached;
+      if (cached !== 'no') {
+        const gRole = await groupRole(env, chatId);
+        if (gRole) {
+          try { await env.ACCESS.put('gauth:' + chatId, gRole, { expirationTtl: 3600 }); } catch (_) { /* 缓存失败不影响 */ }
+          return gRole;
+        }
+        try { await env.ACCESS.put('gauth:' + chatId, 'no', { expirationTtl: 300 }); } catch (_) { /* 同上 */ }
+      }
+    } catch (e) {
+      console.log('[gauth-err]', String(e.message || e));
+    }
+  }
   try {
     const v = await env.ACCESS.get('chat:' + chatId);
     if (v === 'admin') return 'admin';
